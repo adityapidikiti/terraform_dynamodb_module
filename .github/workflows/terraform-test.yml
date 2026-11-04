@@ -88,13 +88,21 @@ jobs:
         run: terraform test -filter=plan.tftest.hcl
 
   # Live tests. Manual dispatch only, and only when the box is ticked.
-  # Add AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY as repository secrets
-  # (Settings -> Secrets and variables -> Actions) before enabling this.
+  #
+  # Authentication, in order of preference:
+  #   1. OIDC — set the repository variable AWS_ROLE_ARN. GitHub mints a
+  #      short-lived token and STS exchanges it for role credentials. No
+  #      stored secrets.
+  #   2. Access keys — AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY repo secrets.
+  # The permissions block below is what lets GitHub issue the OIDC token.
   apply-tests:
     name: terraform test (live AWS)
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.run_apply_tests
     environment: aws-test
+    permissions:
+      id-token: write
+      contents: read
     concurrency:
       group: terraform-apply-tests
       cancel-in-progress: false
@@ -105,14 +113,26 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Check credentials are configured
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        run: |
-          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
-            echo "::error::AWS_ACCESS_KEY_ID is not set. Add it as a repository secret, or use OIDC."
-            exit 1
-          fi
+      # Preferred path: assume an IAM role via OIDC, no stored credentials.
+      - name: Configure AWS credentials (IAM role via OIDC)
+        if: vars.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: gha-terraform-dynamodb-test
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Fallback: static keys, only when no role ARN is configured.
+      - name: Configure AWS credentials (access key)
+        if: vars.AWS_ROLE_ARN == ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Show the identity under test
+        run: aws sts get-caller-identity
 
       - name: terraform init (test directory)
         working-directory: test
@@ -120,7 +140,6 @@ jobs:
 
       - name: terraform test -filter=apply.tftest.hcl
         working-directory: test
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        # configure-aws-credentials exported the credentials into the
+        # environment; the provider picks them up from there.
         run: terraform test -filter=apply.tftest.hcl

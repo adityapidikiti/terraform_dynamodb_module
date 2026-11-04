@@ -6,13 +6,32 @@
 #   terraform init
 #   terraform test -filter=apply.tftest.hcl
 #
-# Requires working AWS credentials, for example:
-#   export AWS_ACCESS_KEY_ID=...
-#   export AWS_SECRET_ACCESS_KEY=...
-#   export AWS_REGION=us-east-1
+# The identity needs DynamoDB plus application-autoscaling permissions; see the
+# Testing section of the README for a minimal policy.
+#
+# Authentication — use an IAM role where you can:
+#
+#   1. Assume-role profile (recommended). Add to ~/.aws/config:
+#        [profile dynamodb-test]
+#        role_arn       = arn:aws:iam::123456789012:role/terraform-dynamodb-test
+#        source_profile = default
+#      then: export AWS_PROFILE=dynamodb-test
+#
+#   2. Provider-level assume_role — add an `assume_role` block to the provider
+#      in test/module.tf.
+#
+#   3. Instance or task role — on EC2/ECS/EKS, attach the role and export
+#      nothing.
+#
+#   4. Temporary credentials from a shell session:
+#        export AWS_ACCESS_KEY_ID=...
+#        export AWS_SECRET_ACCESS_KEY=...
+#        export AWS_SESSION_TOKEN=...   # required for role credentials
+#
+# Static long-lived access keys also work but are the least preferred option.
 #
 # Not run in CI by default: the workflow filters to plan.tftest.hcl. Point it at
-# this file (and configure credentials) if you want live coverage.
+# this file (and configure credentials or OIDC) if you want live coverage.
 #
 # Every table uses environment = "dev" so deletion protection stays off and the
 # teardown succeeds.

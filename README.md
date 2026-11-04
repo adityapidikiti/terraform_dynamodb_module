@@ -225,11 +225,131 @@ then `terraform test` destroys everything at the end of the run.
 ```bash
 cd test
 terraform init
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-export AWS_REGION=us-east-1
 terraform test -filter=apply.tftest.hcl
 ```
+
+Credentials must be available to the AWS provider. Pick one of the methods
+below. The provider block in `test/module.tf` fixes the region at `us-east-1`;
+change it there if you need a different one.
+
+The identity running these tests needs DynamoDB permissions plus, for the table
+that enables autoscaling, `application-autoscaling:*` on the table and index.
+A minimal policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:CreateTable",
+        "dynamodb:DescribeTable",
+        "dynamodb:UpdateTable",
+        "dynamodb:DeleteTable",
+        "dynamodb:DescribeTimeToLive",
+        "dynamodb:UpdateTimeToLive",
+        "dynamodb:DescribeContinuousBackups",
+        "dynamodb:UpdateContinuousBackups",
+        "dynamodb:TagResource",
+        "dynamodb:ListTagsOfResource",
+        "application-autoscaling:RegisterScalableTarget",
+        "application-autoscaling:DescribeScalableTargets",
+        "application-autoscaling:PutScalingPolicy",
+        "application-autoscaling:DescribeScalingPolicies",
+        "application-autoscaling:DeleteScalingPolicy",
+        "application-autoscaling:DeregisterScalableTarget"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+Scope `Resource` down to the table ARNs in a shared account. Everything the
+tests create is named `tf-dynamodb-module-test-*`.
+
+#### Option 1 — IAM role via a named profile (recommended)
+
+This is the safest local setup: you keep short-lived credentials and never put
+an access key on disk. Define an assume-role profile in `~/.aws/config`:
+
+```ini
+[profile dynamodb-test]
+role_arn       = arn:aws:iam::123456789012:role/terraform-dynamodb-test
+source_profile = default
+region         = us-east-1
+```
+
+`source_profile` is any profile that can already call `sts:AssumeRole` — your
+SSO login, for example. Then point Terraform at the profile:
+
+```bash
+cd test
+terraform init
+export AWS_PROFILE=dynamodb-test
+terraform test -filter=apply.tftest.hcl
+```
+
+The provider assumes the role and everything runs as that role. Verify which
+identity you are before running, so you do not apply to the wrong account:
+
+```bash
+aws sts get-caller-identity --profile dynamodb-test
+```
+
+#### Option 2 — IAM role assumed by the provider itself
+
+If you would rather not use a profile, declare the role in the provider block
+in `test/module.tf`:
+
+```hcl
+provider "aws" {
+  region = "us-east-1"
+
+  assume_role {
+    role_arn     = "arn:aws:iam::123456789012:role/terraform-dynamodb-test"
+    session_name = "terraform-dynamodb-module-test"
+    # Optional: MFA and external ID for stricter setups.
+    # external_id = "..."
+    # duration    = "1h"
+  }
+}
+```
+
+Terraform assumes the role for every AWS call. Leave the block in place only
+while testing; it is configuration, not a secret, but it does pin the account.
+
+#### Option 3 — IAM role from instance or task metadata
+
+On EC2, ECS, or EKS the credentials are already there — attach the role to the
+instance or task and run the tests with no AWS environment variables at all:
+
+```bash
+cd test
+terraform init
+terraform test -filter=apply.tftest.hcl
+```
+
+The provider discovers the instance profile or task role automatically. On EKS
+with IRSA, this works through the web identity token the pod already mounts.
+
+#### Option 4 — assume a role from the CLI session (web identity / SSO)
+
+If you have already assumed a role in your shell, either through
+`aws sso login` or by exporting a web identity token, export the resulting
+credentials and run the tests:
+
+```bash
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_SESSION_TOKEN=...   # required for temporary credentials
+export AWS_REGION=us-east-1
+```
+
+Temporary credentials from `sts:AssumeRole` always include a session token. A
+missing `AWS_SESSION_TOKEN` is the usual cause of `InvalidClientTokenId` when
+using role credentials.
 
 ### Continuous integration
 
@@ -242,8 +362,21 @@ so this job is safe to run on pull requests from forks. This is the job that
 gates a merge.
 - **terraform test (live AWS)** — the apply tests. Manual dispatch only, and
 only when the `run_apply_tests` input is ticked, because it creates real
-infrastructure. Add `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as
-repository secrets (or switch the job to OIDC) before using it.
+infrastructure. It authenticates in one of two ways: if the repository
+variable `AWS_ROLE_ARN` is set it uses GitHub OIDC to assume that role (no
+stored keys, nothing long-lived), otherwise it falls back to the
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets. Set the
+variable rather than the secrets where you can.
+
+To use OIDC, create an IAM role whose trust policy allows GitHub's provider
+(`token.actions.githubusercontent.com`) for this repository, then add its ARN
+as a repository variable:
+
+```bash
+gh variable set AWS_ROLE_ARN \
+  --body arn:aws:iam::123456789012:role/github-terraform-dynamodb-test \
+  --repo adityapidikiti/terraform_dynamodb_module
+```
 
 ## Requirements
 
