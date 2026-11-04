@@ -1,4 +1,4 @@
-# tf_dynamodb
+# terraform_dynamodb_module
 
 Terraform module for creating AWS DynamoDB tables.
 
@@ -9,7 +9,7 @@ configuration so that module upgrades are explicit.
 
 ```hcl
 module "dynamodb_table" {
-  source = "git@github.com:adityapidikiti/tf_dynamodb.git"
+  source = "git@github.com:adityapidikiti/terraform_dynamodb_module.git"
 
   table_name    = "${local.env}-my-table" # rename
 
@@ -90,7 +90,7 @@ If using provisioned capacity, autoscaling must be configured to avoid throttlin
 
 ```hcl
 module "dynamodb_table" {
-  source = "git@github.com:adityapidikiti/tf_dynamodb.git"
+  source = "git@github.com:adityapidikiti/terraform_dynamodb_module.git"
 
   table_name   = "${local.env}-my-table"
   billing_mode = "PROVISIONED"
@@ -150,7 +150,7 @@ import_table = {
 
 ```hcl
 module "user_table" {
-  source = "git@github.com:adityapidikiti/tf_dynamodb.git"
+  source = "git@github.com:adityapidikiti/terraform_dynamodb_module.git"
 
   table_name   = "${local.env}-users"
   billing_mode = "PAY_PER_REQUEST"
