@@ -2,6 +2,7 @@
 vendor/
 .planfiles
 .terraform
+.terraform.lock.hcl
 .kitchen
 .idea/
 *.txt
