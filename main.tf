@@ -10,12 +10,10 @@ locals {
   }
 
   tagging_standard_tags = {
-    BusinessUnit = var.business_unit
-    App          = var.app
-    ManagedBy    = var.managed_by
-    Environment  = var.environment
-    Role         = var.role
-    Provisioner  = "Terraform"
+    App         = var.app
+    ManagedBy   = var.managed_by
+    Environment = var.environment
+    Provisioner = "Terraform"
   }
 }
 

@@ -39,10 +39,6 @@ variable "attributes" {
   description = "Key values."
 }
 
-variable "business_unit" {
-  type = string
-}
-
 variable "app" {
   type = string
 }
@@ -52,10 +48,6 @@ variable "managed_by" {
 }
 
 variable "environment" {
-  type = string
-}
-
-variable "role" {
   type = string
 }
 

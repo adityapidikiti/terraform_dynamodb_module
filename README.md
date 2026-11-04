@@ -27,11 +27,9 @@ module "dynamodb_table" {
   ]
 
   # Required tagging
-  business_unit = "Consumer"
   app           = "my-app"
   managed_by    = local.managed_by
   environment   = local.env
-  role          = "database"
 }
 ```
 
@@ -114,11 +112,9 @@ module "dynamodb_table" {
   ]
 
   # Required tagging
-  business_unit = "Consumer"
   app           = "my-app"
   managed_by    = local.managed_by
   environment   = local.env
-  role          = "database"
 }
 ```
 
@@ -183,11 +179,9 @@ module "user_table" {
   ]
 
   # Tagging
-  business_unit = "Consumer"
   app           = "user-service"
   managed_by    = local.managed_by
   environment   = local.env
-  role          = "user-data"
 }
 ```
 
@@ -229,11 +223,9 @@ No modules.
 |------|-------------|------|---------|:--------:|
 | <a name="input_app"></a> [app](#input\_app) | n/a | `string` | n/a | yes |
 | <a name="input_attributes"></a> [attributes](#input\_attributes) | Key values. | `list(any)` | n/a | yes |
-| <a name="input_business_unit"></a> [business\_unit](#input\_business\_unit) | n/a | `string` | n/a | yes |
 | <a name="input_environment"></a> [environment](#input\_environment) | n/a | `string` | n/a | yes |
 | <a name="input_hash_key"></a> [hash\_key](#input\_hash\_key) | DynamoDB table Hash Key | `string` | n/a | yes |
 | <a name="input_managed_by"></a> [managed\_by](#input\_managed\_by) | n/a | `string` | n/a | yes |
-| <a name="input_role"></a> [role](#input\_role) | n/a | `string` | n/a | yes |
 | <a name="input_table_name"></a> [table\_name](#input\_table\_name) | n/a | `string` | n/a | yes |
 | <a name="input_autoscale_max_read_capacity"></a> [autoscale\_max\_read\_capacity](#input\_autoscale\_max\_read\_capacity) | DynamoDB autoscaling max read capacity | `number` | `20` | no |
 | <a name="input_autoscale_max_read_capacity_index"></a> [autoscale\_max\_read\_capacity\_index](#input\_autoscale\_max\_read\_capacity\_index) | DynamoDB autoscaling max read capacity for index. Uses `autoscale_max_read_capacity` if not set | `any` | `null` | no |
