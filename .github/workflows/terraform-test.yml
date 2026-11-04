@@ -1,0 +1,126 @@
+name: terraform-test
+
+# How this works
+# --------------
+# `terraform test` reads *.tftest.hcl files from the test/ directory. Each
+# `run` block plans or applies the configuration in that directory and then
+# evaluates `assert` blocks. A failing assertion fails the run, which fails the
+# job.
+#
+# Two files live there:
+#
+#   test/plan.tftest.hcl   Uses `mock_provider "aws"`, so the AWS provider
+#                          never talks to AWS. No credentials, no resources, no
+#                          cost. Runs on every push and pull request.
+#
+#   test/apply.tftest.hcl  Real apply against a real AWS account, then
+#                          `terraform test` destroys everything at the end of
+#                          the run. Needs credentials, so it is gated behind
+#                          manual dispatch.
+#
+# Locally:
+#   cd test
+#   terraform init
+#   terraform test                                    # every file (needs AWS creds)
+#   terraform test -filter=plan.tftest.hcl            # credential-free only
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_apply_tests:
+        description: "Also run the live AWS apply tests (creates and destroys real DynamoDB tables)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_VERSION: "1.17.1"
+  # Only used by the apply tests; the provider is mocked in the plan tests.
+  AWS_REGION: us-east-1
+
+jobs:
+  # Formatting and static validation of the module itself. Fast, no credentials.
+  fmt-and-validate:
+    name: fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform validate (root module)
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+  # Credential-free tests. This is the job that gates a merge.
+  plan-tests:
+    name: terraform test (mocked AWS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: terraform init (test directory)
+        working-directory: test
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate (test directory)
+        working-directory: test
+        run: terraform validate
+
+      - name: terraform test -filter=plan.tftest.hcl
+        working-directory: test
+        # mock_provider means no AWS credentials are present or needed here.
+        run: terraform test -filter=plan.tftest.hcl
+
+  # Live tests. Manual dispatch only, and only when the box is ticked.
+  # Add AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY as repository secrets
+  # (Settings -> Secrets and variables -> Actions) before enabling this.
+  apply-tests:
+    name: terraform test (live AWS)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.run_apply_tests
+    environment: aws-test
+    concurrency:
+      group: terraform-apply-tests
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Check credentials are configured
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "::error::AWS_ACCESS_KEY_ID is not set. Add it as a repository secret, or use OIDC."
+            exit 1
+          fi
+
+      - name: terraform init (test directory)
+        working-directory: test
+        run: terraform init -backend=false -input=false
+
+      - name: terraform test -filter=apply.tftest.hcl
+        working-directory: test
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: terraform test -filter=apply.tftest.hcl

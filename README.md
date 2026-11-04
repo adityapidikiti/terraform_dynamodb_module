@@ -185,6 +185,66 @@ module "user_table" {
 }
 ```
 
+## Testing
+
+The `test/` directory contains a Terraform configuration that instantiates this
+module four ways, plus `*.tftest.hcl` files that exercise it with
+[`terraform test`](https://developer.hashicorp.com/terraform/language/tests).
+Terraform 1.7 or newer is required.
+
+`test/module.tf` declares the module calls. Each one targets a different code
+path: a minimal on-demand table, a provisioned table with autoscaling and a
+GSI, an on-demand table with throughput ceilings and TTL, and a
+`STANDARD_INFREQUENT_ACCESS` table with PITR disabled. `test/outputs.tf`
+exposes their results so tests have something to assert against.
+
+Every table is created with `environment = "dev"`. That makes the module turn
+off deletion protection, which matters because `terraform test` destroys the
+infrastructure it creates — a protected table would fail to delete.
+
+### Plan tests (no AWS credentials)
+
+`test/plan.tftest.hcl` starts with `mock_provider "aws" {}`. The AWS provider
+therefore never contacts AWS: no account, no credentials, no resources, no
+cost. These runs catch invalid arguments for the provider version in use,
+missing required inputs, type errors, and broken wiring between module inputs
+and outputs.
+
+```bash
+cd test
+terraform init
+terraform test -filter=plan.tftest.hcl
+```
+
+### Apply tests (real AWS)
+
+`test/apply.tftest.hcl` uses `command = apply` against a real account. It
+creates the tables, asserts on the returned names, ARNs, and stream metadata,
+then `terraform test` destroys everything at the end of the run.
+
+```bash
+cd test
+terraform init
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=us-east-1
+terraform test -filter=apply.tftest.hcl
+```
+
+### Continuous integration
+
+`.github/workflows/terraform-test.yml` runs three jobs:
+
+- **fmt + validate** — `terraform fmt -check -recursive` and `terraform validate`
+on the root module, on every push and pull request.
+- **terraform test (mocked AWS)** — the plan tests. No secrets are referenced,
+so this job is safe to run on pull requests from forks. This is the job that
+gates a merge.
+- **terraform test (live AWS)** — the apply tests. Manual dispatch only, and
+only when the `run_apply_tests` input is ticked, because it creates real
+infrastructure. Add `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as
+repository secrets (or switch the job to OIDC) before using it.
+
 ## Requirements
 
 | Name | Version |
