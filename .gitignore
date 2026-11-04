@@ -1,0 +1,9 @@
+.bundle/
+vendor/
+.planfiles
+.terraform
+.kitchen
+.idea/
+*.txt
+terraform.*
+*.iml
