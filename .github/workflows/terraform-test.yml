@@ -1,29 +1,5 @@
 name: terraform-test
 
-# How this works
-# --------------
-# `terraform test` reads *.tftest.hcl files from the test/ directory. Each
-# `run` block plans or applies the configuration in that directory and then
-# evaluates `assert` blocks. A failing assertion fails the run, which fails the
-# job.
-#
-# Two files live there:
-#
-#   test/plan.tftest.hcl   Uses `mock_provider "aws"`, so the AWS provider
-#                          never talks to AWS. No credentials, no resources, no
-#                          cost. Runs on every push and pull request.
-#
-#   test/apply.tftest.hcl  Real apply against a real AWS account, then
-#                          `terraform test` destroys everything at the end of
-#                          the run. Needs credentials, so it is gated behind
-#                          manual dispatch.
-#
-# Locally:
-#   cd test
-#   terraform init
-#   terraform test                                    # every file (needs AWS creds)
-#   terraform test -filter=plan.tftest.hcl            # credential-free only
-
 on:
   push:
     branches: [main]
@@ -31,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       run_apply_tests:
-        description: "Also run the live AWS apply tests (creates and destroys real DynamoDB tables)"
+        description: "Run the live AWS apply tests (creates and destroys real tables)"
         type: boolean
         default: false
 
@@ -40,13 +16,10 @@ permissions:
 
 env:
   TERRAFORM_VERSION: "1.17.1"
-  # Only used by the apply tests; the provider is mocked in the plan tests.
   AWS_REGION: us-east-1
 
 jobs:
-  # Formatting and static validation of the module itself. Fast, no credentials.
   fmt-and-validate:
-    name: fmt + validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,17 +28,13 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: terraform fmt
-        run: terraform fmt -check -recursive -diff
+      - run: terraform fmt -check -recursive -diff
 
-      - name: terraform validate (root module)
-        run: |
-          terraform init -backend=false -input=false
-          terraform validate
+      - run: terraform init -backend=false -input=false
 
-  # Credential-free tests. This is the job that gates a merge.
+      - run: terraform validate
+
   plan-tests:
-    name: terraform test (mocked AWS)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,29 +43,18 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: terraform init (test directory)
-        working-directory: test
+      - working-directory: test
         run: terraform init -backend=false -input=false
 
-      - name: terraform validate (test directory)
-        working-directory: test
+      - working-directory: test
         run: terraform validate
 
-      - name: terraform test -filter=plan.tftest.hcl
-        working-directory: test
-        # mock_provider means no AWS credentials are present or needed here.
+      - working-directory: test
         run: terraform test -filter=plan.tftest.hcl
 
-  # Live tests. Manual dispatch only, and only when the box is ticked.
-  #
-  # Authentication, in order of preference:
-  #   1. OIDC — set the repository variable AWS_ROLE_ARN. GitHub mints a
-  #      short-lived token and STS exchanges it for role credentials. No
-  #      stored secrets.
-  #   2. Access keys — AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY repo secrets.
-  # The permissions block below is what lets GitHub issue the OIDC token.
+  # Manual dispatch only. Uses OIDC when the AWS_ROLE_ARN repository variable
+  # is set, otherwise the AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY secrets.
   apply-tests:
-    name: terraform test (live AWS)
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.run_apply_tests
     environment: aws-test
@@ -113,33 +71,24 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      # Preferred path: assume an IAM role via OIDC, no stored credentials.
-      - name: Configure AWS credentials (IAM role via OIDC)
+      - uses: aws-actions/configure-aws-credentials@v4
         if: vars.AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           role-session-name: gha-terraform-dynamodb-test
           aws-region: ${{ env.AWS_REGION }}
 
-      # Fallback: static keys, only when no role ARN is configured.
-      - name: Configure AWS credentials (access key)
+      - uses: aws-actions/configure-aws-credentials@v4
         if: vars.AWS_ROLE_ARN == ''
-        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Show the identity under test
-        run: aws sts get-caller-identity
+      - run: aws sts get-caller-identity
 
-      - name: terraform init (test directory)
-        working-directory: test
+      - working-directory: test
         run: terraform init -backend=false -input=false
 
-      - name: terraform test -filter=apply.tftest.hcl
-        working-directory: test
-        # configure-aws-credentials exported the credentials into the
-        # environment; the provider picks them up from there.
+      - working-directory: test
         run: terraform test -filter=apply.tftest.hcl

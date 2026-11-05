@@ -1,18 +1,12 @@
-# Module instantiations exercised by the tests in this directory.
-#
-# The provider below is used by the apply tests (test/apply.tftest.hcl), which
-# talk to real AWS. The plan tests (test/plan.tftest.hcl) replace it with a
-# mocked provider, so they need no credentials.
-#
-# Every table uses environment = "dev" so the module disables deletion
-# protection; terraform test destroys the infrastructure after each run, and a
-# protected table would fail to delete.
+# Module calls used by the tests. The plan tests substitute a mock provider.
+# Tables use environment = "dev" so deletion protection is off and the
+# teardown at the end of a run succeeds.
 
 provider "aws" {
   region = "us-east-1"
 }
 
-# Smallest possible table: on-demand billing, single hash key.
+# Minimal on-demand table.
 module "basic" {
   source = "../"
 
@@ -31,9 +25,7 @@ module "basic" {
   ]
 }
 
-# Provisioned capacity with autoscaling on both the table and a GSI, plus a
-# stream. Covers the capacity branches and the null_resource that tracks index
-# names.
+# Provisioned, autoscaled table with a GSI and a stream.
 module "provisioned_autoscaling_gsi" {
   source = "../"
 
@@ -83,7 +75,7 @@ module "provisioned_autoscaling_gsi" {
   ]
 }
 
-# On-demand billing with explicit throughput ceilings and a TTL attribute.
+# On-demand with throughput limits and a TTL.
 module "ondemand_limits_ttl" {
   source = "../"
 
@@ -112,7 +104,7 @@ module "ondemand_limits_ttl" {
   ]
 }
 
-# Storage class plus point-in-time recovery toggled off.
+# STANDARD_INFREQUENT_ACCESS without PITR.
 module "standard_ia_no_pitr" {
   source = "../"
 

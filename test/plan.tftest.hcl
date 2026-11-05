@@ -1,48 +1,40 @@
-# Credential-free tests. The AWS provider is mocked, so nothing is created in
-# a real account and no AWS credentials are required.
-#
-#   cd test
-#   terraform init
+# Provider is mocked, so this needs no AWS credentials and creates nothing.
 #   terraform test -filter=plan.tftest.hcl
-#
-# These catch the failures that matter most in review: invalid arguments for
-# the provider version in use, missing required inputs, type errors, and
-# wiring mistakes between the module's variables and outputs.
 
 mock_provider "aws" {}
 
-run "basic_table_plans" {
+run "basic" {
   command = plan
 
   assert {
     condition     = output.basic.name == "tf-dynamodb-module-test-basic"
-    error_message = "The module did not propagate table_name to the DynamoDB table."
+    error_message = "table_name was not passed through to the table."
   }
 }
 
-run "provisioned_autoscaling_gsi_plans" {
+run "provisioned" {
   command = plan
 
   assert {
     condition     = output.provisioned_autoscaling_gsi.name == "tf-dynamodb-module-test-provisioned"
-    error_message = "The provisioned table did not receive the expected table_name."
+    error_message = "table_name was not passed through to the provisioned table."
   }
 }
 
-run "ondemand_limits_ttl_plans" {
+run "ondemand" {
   command = plan
 
   assert {
     condition     = output.ondemand_limits_ttl.name == "tf-dynamodb-module-test-ondemand"
-    error_message = "The on-demand table did not receive the expected table_name."
+    error_message = "table_name was not passed through to the on-demand table."
   }
 }
 
-run "standard_ia_no_pitr_plans" {
+run "standard_ia" {
   command = plan
 
   assert {
     condition     = output.standard_ia_no_pitr.name == "tf-dynamodb-module-test-standard-ia"
-    error_message = "The STANDARD_INFREQUENT_ACCESS table did not receive the expected table_name."
+    error_message = "table_name was not passed through to the STANDARD_INFREQUENT_ACCESS table."
   }
 }

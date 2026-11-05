@@ -187,202 +187,22 @@ module "user_table" {
 
 ## Testing
 
-The `test/` directory contains a Terraform configuration that instantiates this
-module four ways, plus `*.tftest.hcl` files that exercise it with
-[`terraform test`](https://developer.hashicorp.com/terraform/language/tests).
-Terraform 1.7 or newer is required.
-
-`test/module.tf` declares the module calls. Each one targets a different code
-path: a minimal on-demand table, a provisioned table with autoscaling and a
-GSI, an on-demand table with throughput ceilings and TTL, and a
-`STANDARD_INFREQUENT_ACCESS` table with PITR disabled. `test/outputs.tf`
-exposes their results so tests have something to assert against.
-
-Every table is created with `environment = "dev"`. That makes the module turn
-off deletion protection, which matters because `terraform test` destroys the
-infrastructure it creates — a protected table would fail to delete.
-
-### Plan tests (no AWS credentials)
-
-`test/plan.tftest.hcl` starts with `mock_provider "aws" {}`. The AWS provider
-therefore never contacts AWS: no account, no credentials, no resources, no
-cost. These runs catch invalid arguments for the provider version in use,
-missing required inputs, type errors, and broken wiring between module inputs
-and outputs.
+Tests live in `test/` and use `terraform test`. See [test/README.md](test/README.md)
+for credentials and IAM permissions.
 
 ```bash
-cd test
-terraform init
-terraform test -filter=plan.tftest.hcl
+cd test && terraform init
+terraform test -filter=plan.tftest.hcl     # mocked provider, no credentials
+terraform test -filter=apply.tftest.hcl    # real AWS, creates and destroys tables
 ```
 
-### Apply tests (real AWS)
-
-`test/apply.tftest.hcl` uses `command = apply` against a real account. It
-creates the tables, asserts on the returned names, ARNs, and stream metadata,
-then `terraform test` destroys everything at the end of the run.
-
-```bash
-cd test
-terraform init
-terraform test -filter=apply.tftest.hcl
-```
-
-Credentials must be available to the AWS provider. Pick one of the methods
-below. The provider block in `test/module.tf` fixes the region at `us-east-1`;
-change it there if you need a different one.
-
-The identity running these tests needs DynamoDB permissions plus, for the table
-that enables autoscaling, `application-autoscaling:*` on the table and index.
-A minimal policy:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:CreateTable",
-        "dynamodb:DescribeTable",
-        "dynamodb:UpdateTable",
-        "dynamodb:DeleteTable",
-        "dynamodb:DescribeTimeToLive",
-        "dynamodb:UpdateTimeToLive",
-        "dynamodb:DescribeContinuousBackups",
-        "dynamodb:UpdateContinuousBackups",
-        "dynamodb:TagResource",
-        "dynamodb:ListTagsOfResource",
-        "application-autoscaling:RegisterScalableTarget",
-        "application-autoscaling:DescribeScalableTargets",
-        "application-autoscaling:PutScalingPolicy",
-        "application-autoscaling:DescribeScalingPolicies",
-        "application-autoscaling:DeleteScalingPolicy",
-        "application-autoscaling:DeregisterScalableTarget"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-```
-
-Scope `Resource` down to the table ARNs in a shared account. Everything the
-tests create is named `tf-dynamodb-module-test-*`.
-
-#### Option 1 — IAM role via a named profile (recommended)
-
-This is the safest local setup: you keep short-lived credentials and never put
-an access key on disk. Define an assume-role profile in `~/.aws/config`:
-
-```ini
-[profile dynamodb-test]
-role_arn       = arn:aws:iam::123456789012:role/terraform-dynamodb-test
-source_profile = default
-region         = us-east-1
-```
-
-`source_profile` is any profile that can already call `sts:AssumeRole` — your
-SSO login, for example. Then point Terraform at the profile:
-
-```bash
-cd test
-terraform init
-export AWS_PROFILE=dynamodb-test
-terraform test -filter=apply.tftest.hcl
-```
-
-The provider assumes the role and everything runs as that role. Verify which
-identity you are before running, so you do not apply to the wrong account:
-
-```bash
-aws sts get-caller-identity --profile dynamodb-test
-```
-
-#### Option 2 — IAM role assumed by the provider itself
-
-If you would rather not use a profile, declare the role in the provider block
-in `test/module.tf`:
-
-```hcl
-provider "aws" {
-  region = "us-east-1"
-
-  assume_role {
-    role_arn     = "arn:aws:iam::123456789012:role/terraform-dynamodb-test"
-    session_name = "terraform-dynamodb-module-test"
-    # Optional: MFA and external ID for stricter setups.
-    # external_id = "..."
-    # duration    = "1h"
-  }
-}
-```
-
-Terraform assumes the role for every AWS call. Leave the block in place only
-while testing; it is configuration, not a secret, but it does pin the account.
-
-#### Option 3 — IAM role from instance or task metadata
-
-On EC2, ECS, or EKS the credentials are already there — attach the role to the
-instance or task and run the tests with no AWS environment variables at all:
-
-```bash
-cd test
-terraform init
-terraform test -filter=apply.tftest.hcl
-```
-
-The provider discovers the instance profile or task role automatically. On EKS
-with IRSA, this works through the web identity token the pod already mounts.
-
-#### Option 4 — assume a role from the CLI session (web identity / SSO)
-
-If you have already assumed a role in your shell, either through
-`aws sso login` or by exporting a web identity token, export the resulting
-credentials and run the tests:
-
-```bash
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-export AWS_SESSION_TOKEN=...   # required for temporary credentials
-export AWS_REGION=us-east-1
-```
-
-Temporary credentials from `sts:AssumeRole` always include a session token. A
-missing `AWS_SESSION_TOKEN` is the usual cause of `InvalidClientTokenId` when
-using role credentials.
-
-### Continuous integration
-
-`.github/workflows/terraform-test.yml` runs three jobs:
-
-- **fmt + validate** — `terraform fmt -check -recursive` and `terraform validate`
-on the root module, on every push and pull request.
-- **terraform test (mocked AWS)** — the plan tests. No secrets are referenced,
-so this job is safe to run on pull requests from forks. This is the job that
-gates a merge.
-- **terraform test (live AWS)** — the apply tests. Manual dispatch only, and
-only when the `run_apply_tests` input is ticked, because it creates real
-infrastructure. It authenticates in one of two ways: if the repository
-variable `AWS_ROLE_ARN` is set it uses GitHub OIDC to assume that role (no
-stored keys, nothing long-lived), otherwise it falls back to the
-`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets. Set the
-variable rather than the secrets where you can.
-
-To use OIDC, create an IAM role whose trust policy allows GitHub's provider
-(`token.actions.githubusercontent.com`) for this repository, then add its ARN
-as a repository variable:
-
-```bash
-gh variable set AWS_ROLE_ARN \
-  --body arn:aws:iam::123456789012:role/github-terraform-dynamodb-test \
-  --repo adityapidikiti/terraform_dynamodb_module
-```
+CI runs fmt, validate and the mocked tests on every push and pull request.
 
 ## Requirements
 
 | Name | Version |
 |------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 0.12 |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.0 |
 
 ## Providers
 
@@ -414,12 +234,12 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_app"></a> [app](#input\_app) | n/a | `string` | n/a | yes |
+| <a name="input_app"></a> [app](#input\_app) | Application the table belongs to, used for the App tag. | `string` | n/a | yes |
 | <a name="input_attributes"></a> [attributes](#input\_attributes) | Key values. | `list(any)` | n/a | yes |
-| <a name="input_environment"></a> [environment](#input\_environment) | n/a | `string` | n/a | yes |
+| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment, used for the Environment tag. Also sets the default for enable\_deletion\_protection. | `string` | n/a | yes |
 | <a name="input_hash_key"></a> [hash\_key](#input\_hash\_key) | DynamoDB table Hash Key | `string` | n/a | yes |
-| <a name="input_managed_by"></a> [managed\_by](#input\_managed\_by) | n/a | `string` | n/a | yes |
-| <a name="input_table_name"></a> [table\_name](#input\_table\_name) | n/a | `string` | n/a | yes |
+| <a name="input_managed_by"></a> [managed\_by](#input\_managed\_by) | Team responsible for the table, used for the ManagedBy tag. | `string` | n/a | yes |
+| <a name="input_table_name"></a> [table\_name](#input\_table\_name) | Name of the DynamoDB table. | `string` | n/a | yes |
 | <a name="input_autoscale_max_read_capacity"></a> [autoscale\_max\_read\_capacity](#input\_autoscale\_max\_read\_capacity) | DynamoDB autoscaling max read capacity | `number` | `20` | no |
 | <a name="input_autoscale_max_read_capacity_index"></a> [autoscale\_max\_read\_capacity\_index](#input\_autoscale\_max\_read\_capacity\_index) | DynamoDB autoscaling max read capacity for index. Uses `autoscale_max_read_capacity` if not set | `any` | `null` | no |
 | <a name="input_autoscale_max_write_capacity"></a> [autoscale\_max\_write\_capacity](#input\_autoscale\_max\_write\_capacity) | DynamoDB autoscaling max write capacity | `number` | `20` | no |
