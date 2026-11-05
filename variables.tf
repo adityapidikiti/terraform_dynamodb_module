@@ -1,5 +1,6 @@
 variable "table_name" {
-  type = string
+  type        = string
+  description = "Name of the DynamoDB table."
 }
 
 variable "billing_mode" {
@@ -40,15 +41,18 @@ variable "attributes" {
 }
 
 variable "app" {
-  type = string
+  type        = string
+  description = "Application the table belongs to, used for the App tag."
 }
 
 variable "managed_by" {
-  type = string
+  type        = string
+  description = "Team responsible for the table, used for the ManagedBy tag."
 }
 
 variable "environment" {
-  type = string
+  type        = string
+  description = "Deployment environment, used for the Environment tag. Also sets the default for enable_deletion_protection."
 }
 
 variable "global_secondary_index" {
